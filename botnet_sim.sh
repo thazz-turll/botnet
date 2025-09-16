@@ -24,6 +24,7 @@ root
 admin
 123456
 password
+pass
 EOF
 
 say "[*] Brute-force bằng Hydra ..."
